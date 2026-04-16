@@ -1,3 +1,13 @@
 <Solution>
   <Project Path="AmGateway/AmGateway.csproj" />
+  <Project Path="AmGateway.Abstractions/AmGateway.Abstractions.csproj" />
+  <Project Path="AmGateway.PluginHost/AmGateway.PluginHost.csproj" />
+  <Folder Name="/Plugins/">
+    <Project Path="Plugins/AmGateway.Driver.Modbus/AmGateway.Driver.Modbus.csproj" />
+    <Project Path="Plugins/AmGateway.Driver.OpcUa/AmGateway.Driver.OpcUa.csproj" />
+    <Project Path="Plugins/AmGateway.Driver.S7/AmGateway.Driver.S7.csproj" />
+    <Project Path="Plugins/AmGateway.Driver.Cip/AmGateway.Driver.Cip.csproj" />
+    <Project Path="Plugins/AmGateway.Publisher.Mqtt/AmGateway.Publisher.Mqtt.csproj" />
+    <Project Path="Plugins/AmGateway.Publisher.InfluxDB/AmGateway.Publisher.InfluxDB.csproj" />
+  </Folder>
 </Solution>

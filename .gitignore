@@ -361,3 +361,13 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+
+# Project temp files
+pkg_check.txt
+pkg_output.txt
+
+# SQLite database files
+*.db
+
+# App settings with secrets (keep template)
+# appsettings.json
