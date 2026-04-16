@@ -415,8 +415,7 @@ curl.exe -s http://localhost:8086/api/v2/buckets -H "Authorization: Token $token
 ### 检查从站进程
 
 ```powershell
-# 注意：进程名是 AmVritualSlave（少了个 i，项目拼写如此）
-Get-Process -Name "AmVritualSlave" -ErrorAction SilentlyContinue
+Get-Process -Name "AmVirtualSlave" -ErrorAction SilentlyContinue
 # 查看监听端口
 Get-NetTCPConnection -OwningProcess <PID> -State Listen
 ```
