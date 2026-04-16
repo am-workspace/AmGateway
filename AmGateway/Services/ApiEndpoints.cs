@@ -281,6 +281,13 @@ public static class ApiEndpoints
             }
         });
 
+        // 优雅关机端点
+        api.MapPost("/shutdown", async (IHostApplicationLifetime lifetime, CancellationToken ct) =>
+        {
+            lifetime.StopApplication();
+            return Results.Ok(new { message = "网关正在优雅关闭..." });
+        });
+
         return app;
     }
 }

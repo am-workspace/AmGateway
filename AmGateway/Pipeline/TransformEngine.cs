@@ -104,6 +104,8 @@ public sealed class TransformEngine : ITransformEngine
         var k = GetDouble(p, "k", 1.0);
         var b = GetDouble(p, "b", 0.0);
 
+        if (point.Value is decimal dec)
+            return point with { Value = (decimal)k * dec + (decimal)b };
         if (point.Value is double d)
             return point with { Value = k * d + b };
         if (point.Value is float f)

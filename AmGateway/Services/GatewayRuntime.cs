@@ -82,7 +82,7 @@ public sealed class GatewayRuntime
 
             if (string.IsNullOrEmpty(transport)) continue;
 
-            var settingsJson = JsonSerializer.Serialize(pubConfig.GetSection("Settings").Get<Dictionary<string, object?>>());
+            var settingsJson = ConfigurationToJson(pubConfig.GetSection("Settings"));
             await _configRepo.SavePublisherAsync(new PublisherConfigRecord
             {
                 InstanceId = instanceId,
@@ -102,7 +102,7 @@ public sealed class GatewayRuntime
 
             if (string.IsNullOrEmpty(protocol)) continue;
 
-            var settingsJson = JsonSerializer.Serialize(drvConfig.GetSection("Settings").Get<Dictionary<string, object?>>());
+            var settingsJson = ConfigurationToJson(drvConfig.GetSection("Settings"));
             await _configRepo.SaveDriverAsync(new DriverConfigRecord
             {
                 InstanceId = instanceId,

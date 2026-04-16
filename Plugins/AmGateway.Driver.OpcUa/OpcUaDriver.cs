@@ -191,6 +191,21 @@ public sealed class OpcUaDriver : IProtocolDriver
         await _subscription.CreateAsync();
         await _subscription.ApplyChangesAsync();
 
+        // 检查 MonitoredItem 是否创建成功
+        foreach (var item in _subscription.MonitoredItems)
+        {
+            if (!item.Created)
+            {
+                _logger.LogError("[{DriverId}] MonitoredItem 创建失败: NodeId={NodeId}, Status={Status}",
+                    DriverId, item.StartNodeId, item.Status);
+            }
+            else
+            {
+                _logger.LogDebug("[{DriverId}] MonitoredItem 已创建: NodeId={NodeId}, ClientHandle={ClientHandle}",
+                    DriverId, item.StartNodeId, item.ClientHandle);
+            }
+        }
+
         _logger.LogInformation("[{DriverId}] OPC UA 订阅已创建，监控 {Count} 个节点, PublishingInterval: {Interval}ms",
             DriverId, _config.Nodes.Count, _subscription.PublishingInterval);
     }

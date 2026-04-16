@@ -96,7 +96,30 @@ public sealed class ModbusTcpDriver : IProtocolDriver
             try
             {
                 await EnsureConnectedAsync(ct);
-                await ReadRegistersAsync(ct);
+                var readOk = await ReadRegistersAsync(ct);
+
+                if (!readOk)
+                {
+                    // 读取失败，断开连接并等待重连
+                    Disconnect();
+
+                    foreach (var reg in _config.Registers)
+                    {
+                        await _dataSink.PublishAsync(new DataPoint
+                        {
+                            Tag = $"{DriverId}/{reg.Name}",
+                            Value = null,
+                            Timestamp = DateTimeOffset.UtcNow,
+                            Quality = DataQuality.NotConnected,
+                            SourceDriver = DriverId
+                        }, ct);
+                    }
+
+                    try { await Task.Delay(_config.ReconnectDelayMs, ct); }
+                    catch (OperationCanceledException) { break; }
+
+                    continue; // 跳过 PollInterval 等待，立即重试连接
+                }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -104,10 +127,9 @@ public sealed class ModbusTcpDriver : IProtocolDriver
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "[{DriverId}] Modbus 轮询异常", DriverId);
+                _logger.LogError(ex, "[{DriverId}] Modbus 连接异常，等待重连", DriverId);
                 Disconnect();
 
-                // 发布连接断开的数据点
                 foreach (var reg in _config.Registers)
                 {
                     await _dataSink.PublishAsync(new DataPoint
@@ -120,14 +142,10 @@ public sealed class ModbusTcpDriver : IProtocolDriver
                     }, ct);
                 }
 
-                try
-                {
-                    await Task.Delay(_config.ReconnectDelayMs, ct);
-                }
-                catch (OperationCanceledException)
-                {
-                    break;
-                }
+                try { await Task.Delay(_config.ReconnectDelayMs, ct); }
+                catch (OperationCanceledException) { break; }
+
+                continue;
             }
 
             try
@@ -158,17 +176,28 @@ public sealed class ModbusTcpDriver : IProtocolDriver
     }
 
     /// <summary>
-    /// 读取所有寄存器并输出 DataPoint（复用旧项目 ReadAndPublishAsync 逻辑，适配 IDataSink）
+    /// 读取所有寄存器并输出 DataPoint。返回 true 表示全部成功，false 表示有读取失败需重连
     /// </summary>
-    private async Task ReadRegistersAsync(CancellationToken ct)
+    private async Task<bool> ReadRegistersAsync(CancellationToken ct)
     {
-        if (_modbusMaster == null) return;
+        if (_modbusMaster == null) return false;
 
+        var allOk = true;
         foreach (var register in _config.Registers)
         {
             try
             {
-                var value = await ReadRegisterValueAsync(register);
+                var rawValue = await ReadRegisterValueAsync(register);
+                object value;
+                if (register.Type is "Coil" or "DiscreteInput")
+                {
+                    value = rawValue;
+                }
+                else
+                {
+                    var scaled = Math.Round(Convert.ToDouble(rawValue) * register.Scale + register.Offset, register.Precision);
+                    value = (decimal)scaled;
+                }
 
                 await _dataSink.PublishAsync(new DataPoint
                 {
@@ -181,13 +210,15 @@ public sealed class ModbusTcpDriver : IProtocolDriver
                     {
                         ["address"] = register.Address.ToString(),
                         ["type"] = register.Type,
-                        ["protocol"] = "modbus-tcp"
+                        ["protocol"] = "modbus-tcp",
+                        ["scale"] = register.Scale.ToString(),
+                        ["offset"] = register.Offset.ToString()
                     }
                 }, ct);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "[{DriverId}] 读取寄存器 {Name} (地址:{Address}) 失败",
+                _logger.LogError(ex, "[{DriverId}] 读取寄存器 {Name} (地址:{Address}) 失败，将触发重连",
                     DriverId, register.Name, register.Address);
 
                 await _dataSink.PublishAsync(new DataPoint
@@ -198,8 +229,13 @@ public sealed class ModbusTcpDriver : IProtocolDriver
                     Quality = DataQuality.Bad,
                     SourceDriver = DriverId
                 }, ct);
+
+                allOk = false;
+                break; // 一个寄存器失败就够了，跳出 foreach
             }
         }
+
+        return allOk;
     }
 
     /// <summary>
@@ -256,4 +292,7 @@ internal sealed class RegisterDefinition
     public string Name { get; set; } = string.Empty;
     public string Type { get; set; } = "HoldingRegister";
     public int Count { get; set; } = 1;
+    public double Scale { get; set; } = 1.0;
+    public double Offset { get; set; } = 0.0;
+    public int Precision { get; set; } = 2;
 }

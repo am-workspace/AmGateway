@@ -1,4 +1,6 @@
-﻿using AmGateway.Pipeline;
+﻿using System.Text.Json;
+using System.Text.Json.Serialization;
+using AmGateway.Pipeline;
 using AmGateway.PluginHost;
 using AmGateway.Services;
 using Serilog;
@@ -17,6 +19,13 @@ try
     Log.Information("AmGateway 启动中...");
 
     var builder = WebApplication.CreateBuilder(args);
+
+    // JSON 序列化配置：枚举用字符串、详细错误
+    builder.Services.ConfigureHttpJsonOptions(options =>
+    {
+        options.SerializerOptions.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase));
+        options.SerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
+    });
 
     builder.Services.AddWindowsService(options =>
     {
@@ -46,6 +55,9 @@ try
     builder.Logging.AddSerilog();
 
     var app = builder.Build();
+
+    // 开发环境详细错误
+    app.UseDeveloperExceptionPage();
 
     // 设置全局 Runtime 访问器
     GatewayRuntimeAccessor.Runtime = app.Services.GetRequiredService<GatewayRuntime>();
