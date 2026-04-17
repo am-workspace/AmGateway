@@ -40,9 +40,9 @@ public static class ApiEndpoints
         {
             try
             {
-                var config = new ConfigurationBuilder()
-                    .AddInMemoryCollection(request.Settings?.Select(kv => new KeyValuePair<string, string?>(kv.Key, kv.Value?.ToString())))
-                    .Build();
+                // 将 Settings 字典序列化为 JSON，再通过 BuildConfigurationFromJson 递归展平
+                var settingsJson = System.Text.Json.JsonSerializer.Serialize(request.Settings);
+                var config = GatewayRuntime.BuildConfigurationFromJsonPublic(settingsJson);
 
                 var info = await runtime.AddDriverAsync(request.Protocol, request.InstanceId, config, ct);
                 return Results.Created($"/api/drivers/{info.InstanceId}", info);
@@ -90,9 +90,8 @@ public static class ApiEndpoints
         {
             try
             {
-                var config = new ConfigurationBuilder()
-                    .AddInMemoryCollection(request.Settings?.Select(kv => new KeyValuePair<string, string?>(kv.Key, kv.Value?.ToString())))
-                    .Build();
+                var settingsJson = System.Text.Json.JsonSerializer.Serialize(request.Settings);
+                var config = GatewayRuntime.BuildConfigurationFromJsonPublic(settingsJson);
 
                 var info = await runtime.AddPublisherAsync(request.Transport, request.InstanceId, config, ct);
                 return Results.Created($"/api/publishers/{info.InstanceId}", info);

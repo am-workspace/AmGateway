@@ -373,6 +373,192 @@ Start-Process "AmGateway/bin/Debug/net10.0/AmGateway.exe" -WorkingDirectory "AmG
 
 ---
 
+### Bug B9：API 添加驱动/发布器时嵌套数组配置丢失（S7 DataItems 为空）
+
+**现象**
+
+- 通过 API `POST /api/drivers` 添加 S7 驱动，传入 `DataItems` 数组
+- 驱动启动成功，连接正常，但日志显示 `数据项: 0`
+- MQTT 无任何 S7 数据发布
+
+**根因**
+
+两层问题：
+
+**1. `BuildConfigurationFromJson` 用 `Dictionary<string, string?>` 反序列化**
+
+原代码：
+
+```csharp
+private static IConfiguration BuildConfigurationFromJson(string json)
+{
+    var dict = JsonSerializer.Deserialize<Dictionary<string, string?>>(json);
+    // ...
+}
+```
+
+`Dictionary<string, string?>` 只能解析 `{ "Key": "Value" }` 格式，嵌套对象和数组（如 `DataItems: [{...}, {...}]`）直接丢失。
+
+**2. API 端 `CreateDriverRequest.Settings` 转配置时简单 `.ToString()`**
+
+```csharp
+var config = new ConfigurationBuilder()
+    .AddInMemoryCollection(request.Settings?.Select(kv =>
+        new KeyValuePair<string, string?>(kv.Key, kv.Value?.ToString())))
+    .Build();
+```
+
+`Settings` 是 `Dictionary<string, object?>`，嵌套数组反序列化为 `JsonElement`，`.ToString()` 后变成 JSON 字符串但不带键前缀，无法被 `IConfiguration.Bind()` 还原。
+
+**修复**
+
+1. `BuildConfigurationFromJson` 改用 `JsonNode` 递归展平，生成 `DataItems:0:Name`, `DataItems:0:DataType` 等键，`IConfiguration.Bind()` 可正确绑定到 `List<S7DataItemDefinition>`：
+
+```csharp
+private static IConfiguration BuildConfigurationFromJson(string json)
+{
+    var dict = new Dictionary<string, string?>();
+    var node = System.Text.Json.Nodes.JsonNode.Parse(json);
+    if (node != null) FlattenJsonNode(dict, "", node);
+    return new ConfigurationBuilder()
+        .AddInMemoryCollection(dict.Select(kv => new KeyValuePair<string, string?>(kv.Key, kv.Value)))
+        .Build();
+}
+
+private static void FlattenJsonNode(Dictionary<string, string?> dict, string prefix, JsonNode node)
+{
+    switch (node)
+    {
+        case JsonObject obj:
+            foreach (var prop in obj)
+                if (prop.Value != null)
+                    FlattenJsonNode(dict, string.IsNullOrEmpty(prefix) ? prop.Key : $"{prefix}:{prop.Key}", prop.Value);
+            break;
+        case JsonArray arr:
+            for (int i = 0; i < arr.Count; i++)
+                if (arr[i] != null) FlattenJsonNode(dict, $"{prefix}:{i}", arr[i]!);
+            break;
+        default:
+            dict[prefix] = node.ToString();
+            break;
+    }
+}
+```
+
+2. API 端改为序列化整个 Settings 字典后调用修复后的方法：
+
+```csharp
+var settingsJson = JsonSerializer.Serialize(request.Settings);
+var config = GatewayRuntime.BuildConfigurationFromJsonPublic(settingsJson);
+```
+
+**涉及文件**
+
+| 文件 | 修改 |
+|------|------|
+| `AmGateway/Services/GatewayRuntime.cs` | `BuildConfigurationFromJson` 重写为 `JsonNode` 递归展平；新增 `BuildConfigurationFromJsonPublic` 公开方法 |
+| `AmGateway/Services/ApiEndpoints.cs` | `POST /drivers` 和 `POST /publishers` 端点改用 `BuildConfigurationFromJsonPublic` |
+
+---
+
+## 2026-04-17 S7 驱动联调
+
+### Snap7 模拟器配置指南
+
+Snap7 的 `serverdemo.exe` 默认只提供 **DB1、DB2、DB3** 三个空数据块，内部没有任何数据。需要用客户端工具往 DB 块里写入数据，S7 驱动才能读到非零值。
+
+#### 方法一：使用 Snap7 自带 clientdemo.exe
+
+1. 启动 `serverdemo.exe`，点击 **Start** 启动 S7 服务端（监听 `0.0.0.0:102`）
+2. 启动 `clientdemo.exe`：
+   - IP 填 `127.0.0.1`，Rack=0，Slot=0
+   - CpuType 选 `S7 1200`（与服务端一致）
+   - 点击 **Connect**
+3. 连接成功后，切换到 **DB Read/Write** 标签页：
+   - **DB Number**: 输入 `1`（对应 DB1）
+   - **Start**: 输入 `0`（字节偏移）
+   - **Size**: 输入 `12`（3 个 Real × 4 字节）
+   - 点击 **Read** 可以看到 DB1 前 12 字节的当前值（全零）
+4. 要写入 Real 数据，在 **Write** 区域：
+   - 选择 `Real` 类型
+   - 地址填 `DB1.DBD0`（第一个 Real，偏移 0）
+   - 值填如 `25.5`
+   - 点击 **Write**
+   - 同理写入 `DB1.DBD4`（第二个 Real，偏移 4）和 `DB1.DBD8`（第三个 Real，偏移 8）
+
+#### 方法二：使用 S7netplus C# 代码写入
+
+```csharp
+using S7.Net;
+
+using var plc = new Plc(CpuType.S71200, "127.0.0.1", 0, 0);
+plc.Open();
+
+if (plc.IsConnected)
+{
+    // 写入 3 个 Real 到 DB1
+    plc.Write("DB1.DBD0", 25.5f);   // Motor1Speed
+    plc.Write("DB1.DBD4", 75.3f);   // Temperature
+    plc.Write("DB1.DBD8", 101.3f);  // Pressure
+
+    Console.WriteLine("数据写入成功");
+}
+```
+
+#### 方法三：Python snap7 库
+
+```python
+import snap7
+
+client = snap7.client.Client()
+client.connect('127.0.0.1', 0, 0)
+
+# 写入 Real (4 字节 float) 到 DB1
+import struct
+values = [25.5, 75.3, 101.3]
+data = b''.join(struct.pack('<f', v) for v in values)  # 小端 IEEE754
+client.db_write(1, 0, data)
+
+# 验证读取
+result = client.db_read(1, 0, 12)
+print([struct.unpack('<f', result[i:i+4])[0] for i in range(0, 12, 4)])
+```
+
+#### DB 地址格式说明
+
+| 格式 | 含义 | 字节数 | C# 类型 |
+|------|------|--------|---------|
+| `DB1.DBB0` | DB1 字节 0 | 1 | `byte` |
+| `DB1.DBW0` | DB1 字 0 | 2 | `short` / `ushort` |
+| `DB1.DBD0` | DB1 双字 0 | 4 | `int` / `float(Real)` |
+| `DB1.DBX0.0` | DB1 字节 0 第 0 位 | 1 bit | `bool` |
+
+**Real 类型**占 4 字节，地址必须 4 字节对齐（DBD0, DBD4, DBD8, ...）。
+
+#### 网关 S7 驱动配置对应的地址映射
+
+网关 `appsettings.json` 或 API 中的 S7 数据项配置：
+
+```json
+{
+  "Name": "Motor1Speed",
+  "DataType": "Real",
+  "DbNumber": 1,
+  "StartByte": 0
+}
+```
+
+对应 S7 地址 `DB1.DBD0`，读取 4 字节解析为 `float`。
+
+#### 注意事项
+
+- Snap7 `serverdemo.exe` 默认只有 DB1~DB3，如需 DB100 等自定义编号，需修改源码重新编译
+- 写入数据后 `serverdemo.exe` 关闭会丢失，需重新写入
+- S7 驱动 `CpuType` 必须与服务端匹配（推荐 `S71200`）
+- Rack/Slot：S7-1200/1500 为 `0/0`，S7-300 为 `0/2`，S7-400 为 `0/3`
+
+---
+
 ## 运维常用命令速查
 
 ### 检查网关状态
@@ -434,7 +620,7 @@ Invoke-RestMethod -Uri 'http://localhost:5002/api/shutdown' -Method Post -Header
 | # | 问题 | 严重性 | 说明 |
 |---|------|--------|------|
 | 1 | OPC UA 驱动无断线重连 | 高 | `StartAsync` 一次性连接，Session 断开后不会重连 |
-| 2 | `BuildConfigurationFromJson` 反序列化用 `Dictionary<string, string?>` | 中 | 嵌套层级深或非字符串值可能丢失，当前扁平化格式恰好规避 |
+| 2 | ~~`BuildConfigurationFromJson` 反序列化用 `Dictionary<string, string?>`~~ | ~~中~~ | **已修复** → 见 Bug B9 |
 | 3 | `OnMonitoredItemNotification` 使用 `async void` | 低 | 异常可能直接崩溃进程，建议改为安全处理 |
 | 4 | InfluxDB 发布器写入失败时 `publishErrors` 不增长 | 中 | 404 错误可能被静默吞掉，运维无法通过 health API 发现问题 |
 | 5 | 插件编译未集成到主项目构建流程 | 低 | 需手动编译+复制，建议添加构建脚本或 MSBuild Target |

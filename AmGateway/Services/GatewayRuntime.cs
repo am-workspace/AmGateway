@@ -674,13 +674,50 @@ public sealed class GatewayRuntime
         }
     }
 
-    /// <summary>从 JSON 字符串构建 IConfiguration</summary>
+    /// <summary>从 JSON 字符串构建 IConfiguration（递归展平嵌套对象和数组），公开给 API 层使用</summary>
+    public static IConfiguration BuildConfigurationFromJsonPublic(string json) => BuildConfigurationFromJson(json);
+
+    /// <summary>从 JSON 字符串构建 IConfiguration（递归展平嵌套对象和数组）</summary>
     private static IConfiguration BuildConfigurationFromJson(string json)
     {
-        var dict = JsonSerializer.Deserialize<Dictionary<string, string?>>(json);
+        var dict = new Dictionary<string, string?>();
+        var node = System.Text.Json.Nodes.JsonNode.Parse(json);
+        if (node != null)
+        {
+            FlattenJsonNode(dict, "", node);
+        }
         return new ConfigurationBuilder()
-            .AddInMemoryCollection(dict!.Select(kv => new KeyValuePair<string, string?>(kv.Key, kv.Value)))
+            .AddInMemoryCollection(dict.Select(kv => new KeyValuePair<string, string?>(kv.Key, kv.Value)))
             .Build();
+    }
+
+    private static void FlattenJsonNode(Dictionary<string, string?> dict, string prefix, System.Text.Json.Nodes.JsonNode node)
+    {
+        switch (node)
+        {
+            case System.Text.Json.Nodes.JsonObject obj:
+                foreach (var prop in obj)
+                {
+                    if (prop.Value != null)
+                    {
+                        var key = string.IsNullOrEmpty(prefix) ? prop.Key : $"{prefix}:{prop.Key}";
+                        FlattenJsonNode(dict, key, prop.Value);
+                    }
+                }
+                break;
+            case System.Text.Json.Nodes.JsonArray arr:
+                for (int i = 0; i < arr.Count; i++)
+                {
+                    if (arr[i] != null)
+                    {
+                        FlattenJsonNode(dict, $"{prefix}:{i}", arr[i]!);
+                    }
+                }
+                break;
+            default:
+                dict[prefix] = node.ToString();
+                break;
+        }
     }
 
     /// <summary>将 IConfiguration 序列化为 JSON</summary>
