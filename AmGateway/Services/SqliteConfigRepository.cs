@@ -13,6 +13,11 @@ public sealed class SqliteConfigRepository : IConfigRepository
     private readonly ILogger<SqliteConfigRepository> _logger;
     private bool _initialized;
 
+    /// <summary>
+    /// 初始化 SQLite 配置仓库
+    /// </summary>
+    /// <param name="logger">日志记录器</param>
+    /// <param name="dbPath">数据库文件路径，默认为程序目录下的 data/amgateway.db</param>
     public SqliteConfigRepository(ILogger<SqliteConfigRepository> logger, string? dbPath = null)
     {
         _logger = logger;
@@ -22,6 +27,9 @@ public sealed class SqliteConfigRepository : IConfigRepository
         _connectionString = $"Data Source={dbPath}";
     }
 
+    /// <summary>
+    /// 确保数据库已初始化，首次调用时会创建所需的表结构
+    /// </summary>
     private async Task EnsureInitializedAsync()
     {
         if (_initialized) return;
@@ -78,6 +86,10 @@ public sealed class SqliteConfigRepository : IConfigRepository
 
     // === 驱动 ===
 
+    /// <summary>
+    /// 获取所有驱动配置记录
+    /// </summary>
+    /// <returns>驱动配置记录只读列表，按创建时间排序</returns>
     public async Task<IReadOnlyList<DriverConfigRecord>> GetAllDriversAsync()
     {
         await EnsureInitializedAsync();
@@ -98,6 +110,11 @@ public sealed class SqliteConfigRepository : IConfigRepository
         return list;
     }
 
+    /// <summary>
+    /// 根据实例 ID 获取单个驱动配置记录
+    /// </summary>
+    /// <param name="instanceId">驱动实例标识符</param>
+    /// <returns>驱动配置记录；不存在时返回 null</returns>
     public async Task<DriverConfigRecord?> GetDriverAsync(string instanceId)
     {
         await EnsureInitializedAsync();
@@ -118,6 +135,10 @@ public sealed class SqliteConfigRepository : IConfigRepository
         return null;
     }
 
+    /// <summary>
+    /// 保存驱动配置记录，实例 ID 已存在时执行更新操作
+    /// </summary>
+    /// <param name="record">驱动配置记录</param>
     public async Task SaveDriverAsync(DriverConfigRecord record)
     {
         await EnsureInitializedAsync();
@@ -146,6 +167,10 @@ public sealed class SqliteConfigRepository : IConfigRepository
         _logger.LogDebug("[ConfigRepo] 已保存驱动配置: {InstanceId}", record.InstanceId);
     }
 
+    /// <summary>
+    /// 根据实例 ID 删除驱动配置记录
+    /// </summary>
+    /// <param name="instanceId">驱动实例标识符</param>
     public async Task DeleteDriverAsync(string instanceId)
     {
         await EnsureInitializedAsync();
@@ -163,6 +188,10 @@ public sealed class SqliteConfigRepository : IConfigRepository
 
     // === 发布器 ===
 
+    /// <summary>
+    /// 获取所有发布器配置记录
+    /// </summary>
+    /// <returns>发布器配置记录只读列表，按创建时间排序</returns>
     public async Task<IReadOnlyList<PublisherConfigRecord>> GetAllPublishersAsync()
     {
         await EnsureInitializedAsync();
@@ -183,6 +212,11 @@ public sealed class SqliteConfigRepository : IConfigRepository
         return list;
     }
 
+    /// <summary>
+    /// 根据实例 ID 获取单个发布器配置记录
+    /// </summary>
+    /// <param name="instanceId">发布器实例标识符</param>
+    /// <returns>发布器配置记录；不存在时返回 null</returns>
     public async Task<PublisherConfigRecord?> GetPublisherAsync(string instanceId)
     {
         await EnsureInitializedAsync();
@@ -203,6 +237,10 @@ public sealed class SqliteConfigRepository : IConfigRepository
         return null;
     }
 
+    /// <summary>
+    /// 保存发布器配置记录，实例 ID 已存在时执行更新操作
+    /// </summary>
+    /// <param name="record">发布器配置记录</param>
     public async Task SavePublisherAsync(PublisherConfigRecord record)
     {
         await EnsureInitializedAsync();
@@ -231,6 +269,10 @@ public sealed class SqliteConfigRepository : IConfigRepository
         _logger.LogDebug("[ConfigRepo] 已保存发布器配置: {InstanceId}", record.InstanceId);
     }
 
+    /// <summary>
+    /// 根据实例 ID 删除发布器配置记录
+    /// </summary>
+    /// <param name="instanceId">发布器实例标识符</param>
     public async Task DeletePublisherAsync(string instanceId)
     {
         await EnsureInitializedAsync();
@@ -248,6 +290,10 @@ public sealed class SqliteConfigRepository : IConfigRepository
 
     // === 转换规则 ===
 
+    /// <summary>
+    /// 获取所有转换规则记录
+    /// </summary>
+    /// <returns>转换规则记录只读列表，按优先级和创建时间排序</returns>
     public async Task<IReadOnlyList<TransformRuleRecord>> GetAllTransformRulesAsync()
     {
         await EnsureInitializedAsync();
@@ -268,6 +314,11 @@ public sealed class SqliteConfigRepository : IConfigRepository
         return list;
     }
 
+    /// <summary>
+    /// 根据规则 ID 获取单个转换规则记录
+    /// </summary>
+    /// <param name="ruleId">转换规则标识符</param>
+    /// <returns>转换规则记录；不存在时返回 null</returns>
     public async Task<TransformRuleRecord?> GetTransformRuleAsync(string ruleId)
     {
         await EnsureInitializedAsync();
@@ -288,6 +339,10 @@ public sealed class SqliteConfigRepository : IConfigRepository
         return null;
     }
 
+    /// <summary>
+    /// 保存转换规则记录，规则 ID 已存在时执行更新操作
+    /// </summary>
+    /// <param name="record">转换规则记录</param>
     public async Task SaveTransformRuleAsync(TransformRuleRecord record)
     {
         await EnsureInitializedAsync();
@@ -320,6 +375,10 @@ public sealed class SqliteConfigRepository : IConfigRepository
         _logger.LogDebug("[ConfigRepo] 已保存转换规则: {RuleId}", record.RuleId);
     }
 
+    /// <summary>
+    /// 根据规则 ID 删除转换规则记录
+    /// </summary>
+    /// <param name="ruleId">转换规则标识符</param>
     public async Task DeleteTransformRuleAsync(string ruleId)
     {
         await EnsureInitializedAsync();
@@ -337,6 +396,10 @@ public sealed class SqliteConfigRepository : IConfigRepository
 
     // === 路由规则 ===
 
+    /// <summary>
+    /// 获取所有路由规则记录
+    /// </summary>
+    /// <returns>路由规则记录只读列表，按优先级和创建时间排序</returns>
     public async Task<IReadOnlyList<RouteRuleRecord>> GetAllRouteRulesAsync()
     {
         await EnsureInitializedAsync();
@@ -357,6 +420,11 @@ public sealed class SqliteConfigRepository : IConfigRepository
         return list;
     }
 
+    /// <summary>
+    /// 根据规则 ID 获取单个路由规则记录
+    /// </summary>
+    /// <param name="ruleId">路由规则标识符</param>
+    /// <returns>路由规则记录；不存在时返回 null</returns>
     public async Task<RouteRuleRecord?> GetRouteRuleAsync(string ruleId)
     {
         await EnsureInitializedAsync();
@@ -377,6 +445,10 @@ public sealed class SqliteConfigRepository : IConfigRepository
         return null;
     }
 
+    /// <summary>
+    /// 保存路由规则记录，规则 ID 已存在时执行更新操作
+    /// </summary>
+    /// <param name="record">路由规则记录</param>
     public async Task SaveRouteRuleAsync(RouteRuleRecord record)
     {
         await EnsureInitializedAsync();
@@ -407,6 +479,10 @@ public sealed class SqliteConfigRepository : IConfigRepository
         _logger.LogDebug("[ConfigRepo] 已保存路由规则: {RuleId}", record.RuleId);
     }
 
+    /// <summary>
+    /// 根据规则 ID 删除路由规则记录
+    /// </summary>
+    /// <param name="ruleId">路由规则标识符</param>
     public async Task DeleteRouteRuleAsync(string ruleId)
     {
         await EnsureInitializedAsync();
@@ -424,6 +500,10 @@ public sealed class SqliteConfigRepository : IConfigRepository
 
     // === JSON 导出/导入 ===
 
+    /// <summary>
+    /// 将所有配置（驱动、发布器、转换规则、路由规则）导出为 JSON 字符串
+    /// </summary>
+    /// <returns>格式化后的 JSON 字符串</returns>
     public async Task<string> ExportToJsonAsync()
     {
         var drivers = await GetAllDriversAsync();
@@ -477,6 +557,10 @@ public sealed class SqliteConfigRepository : IConfigRepository
         return JsonSerializer.Serialize(export, new JsonSerializerOptions { WriteIndented = true });
     }
 
+    /// <summary>
+    /// 从 JSON 字符串导入配置，覆盖或新增驱动、发布器、转换规则和路由规则
+    /// </summary>
+    /// <param name="json">包含完整配置的 JSON 字符串</param>
     public async Task ImportFromJsonAsync(string json)
     {
         using var doc = JsonDocument.Parse(json);
@@ -557,11 +641,19 @@ public sealed class SqliteConfigRepository : IConfigRepository
         _logger.LogInformation("[ConfigRepo] JSON 导入完成");
     }
 
+    /// <summary>
+    /// 释放资源（SQLite 连接每次操作后已释放，此处无需额外清理）
+    /// </summary>
     public void Dispose()
     {
         // SQLite 连接每次操作后已释放，无需额外清理
     }
 
+    /// <summary>
+    /// 从数据读取器中解析驱动配置记录
+    /// </summary>
+    /// <param name="reader">SQLite 数据读取器</param>
+    /// <returns>驱动配置记录</returns>
     private static DriverConfigRecord ReadDriverRecord(SqliteDataReader reader)
     {
         return new DriverConfigRecord
@@ -575,6 +667,11 @@ public sealed class SqliteConfigRepository : IConfigRepository
         };
     }
 
+    /// <summary>
+    /// 从数据读取器中解析发布器配置记录
+    /// </summary>
+    /// <param name="reader">SQLite 数据读取器</param>
+    /// <returns>发布器配置记录</returns>
     private static PublisherConfigRecord ReadPublisherRecord(SqliteDataReader reader)
     {
         return new PublisherConfigRecord
@@ -588,6 +685,11 @@ public sealed class SqliteConfigRepository : IConfigRepository
         };
     }
 
+    /// <summary>
+    /// 从数据读取器中解析转换规则记录
+    /// </summary>
+    /// <param name="reader">SQLite 数据读取器</param>
+    /// <returns>转换规则记录</returns>
     private static TransformRuleRecord ReadTransformRuleRecord(SqliteDataReader reader)
     {
         return new TransformRuleRecord
@@ -603,6 +705,11 @@ public sealed class SqliteConfigRepository : IConfigRepository
         };
     }
 
+    /// <summary>
+    /// 从数据读取器中解析路由规则记录
+    /// </summary>
+    /// <param name="reader">SQLite 数据读取器</param>
+    /// <returns>路由规则记录</returns>
     private static RouteRuleRecord ReadRouteRuleRecord(SqliteDataReader reader)
     {
         return new RouteRuleRecord

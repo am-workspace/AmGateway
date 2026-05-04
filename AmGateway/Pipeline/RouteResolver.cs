@@ -16,11 +16,21 @@ public sealed class RouteResolver : IRouteResolver
     private List<RouteRule> _rules = [];
     private readonly object _lock = new();
 
+    /// <summary>
+    /// 初始化路由解析器
+    /// </summary>
+    /// <param name="logger">日志记录器</param>
     public RouteResolver(ILogger<RouteResolver> logger)
     {
         _logger = logger;
     }
 
+    /// <summary>
+    /// 根据路由规则解析数据点应发送到的目标发布器列表
+    /// </summary>
+    /// <param name="point">待路由的数据点</param>
+    /// <param name="allPublishers">系统中所有已注册的发布器</param>
+    /// <returns>匹配到的目标发布器列表；无匹配规则时返回所有发布器</returns>
     public IReadOnlyList<IPublisher> Resolve(DataPoint point, IReadOnlyList<IPublisher> allPublishers)
     {
         List<RouteRule> currentRules;
@@ -52,6 +62,10 @@ public sealed class RouteResolver : IRouteResolver
         return allPublishers.Where(p => targetIds.Contains(p.PublisherId)).ToList();
     }
 
+    /// <summary>
+    /// 加载路由规则列表，并按优先级排序后缓存
+    /// </summary>
+    /// <param name="rules">路由规则集合</param>
     public void LoadRules(IReadOnlyList<RouteRule> rules)
     {
         lock (_lock)
@@ -61,6 +75,10 @@ public sealed class RouteResolver : IRouteResolver
         _logger.LogInformation("[RouteResolver] 已加载 {Count} 条路由规则", rules.Count);
     }
 
+    /// <summary>
+    /// 获取当前已加载的路由规则列表
+    /// </summary>
+    /// <returns>当前缓存的路由规则只读集合</returns>
     public IReadOnlyList<RouteRule> GetRules()
     {
         lock (_lock)
@@ -69,6 +87,12 @@ public sealed class RouteResolver : IRouteResolver
         }
     }
 
+    /// <summary>
+    /// 判断标签名称是否匹配给定的通配符模式（支持 *、? 和 **）
+    /// </summary>
+    /// <param name="tag">数据点标签名称</param>
+    /// <param name="pattern">匹配模式，如 "Sensor_*" 或 "**"</param>
+    /// <returns>匹配成功返回 true，否则返回 false</returns>
     private static bool IsTagMatch(string tag, string pattern)
     {
         if (pattern == "*" || pattern == "**")
