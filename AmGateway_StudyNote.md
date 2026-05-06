@@ -674,5 +674,217 @@ API 端点（业务操作）
 
 `GatewayRuntime` 是共享的业务核心，`GatewayHostService` 和 `API` 是两个不同的"消费者"——一个管生命周期，一个管外部操作。把它们分开，`Runtime` 才能被两方独立使用而不互相干扰。
 
+---
+
+## 十一、V2.0 代码审查问题分类
+
+### 背景
+
+对 V2.0 全部 15 个模块的 todo 文件进行审查，共识别约 110+ 个问题条目，按问题类型归纳为 11 类。
+
+### 问题类型总览
+
+| 类型 | 数量 | 严重性 | 涉及模块 |
+|------|------|--------|----------|
+| 并发/竞态 | ~15 | 🔴高 | Runtime、Pipeline、HostService、InfluxDB、MQTT、Transform、Sqlite、Plugin、Route |
+| 连接/重连 | ~10 | 🔴高 | Modbus、S7、OPC UA、MQTT |
+| 数据丢失 | ~8 | 🔴高 | InfluxDB、MQTT、Pipeline、Runtime、HostService |
+| 安全漏洞 | ~8 | 🔴高 | Auth、API、OPC UA、Transform |
+| 资源泄漏 | ~7 | 🔴高 | S7、InfluxDB、Modbus、Plugin |
+| 性能瓶颈 | ~15 | 🟡中 | Pipeline、Route、Transform、S7、Sqlite、Metrics |
+| 异常处理 | ~10 | 🟡中 | Runtime、Pipeline、S7、Sqlite、API、Auth |
+| 配置问题 | ~12 | 🟡中 | Modbus、OPC UA、S7、InfluxDB、MQTT、Pipeline、Metrics |
+| API 设计 | ~8 | 🟡中 | ApiEndpoints、Auth |
+| 代码结构 | ~10 | 🟢低 | Runtime、ApiEndpoints、Modbus、OPC UA |
+| 可观测性 | ~7 | 🟢低 | Modbus、Route、Metrics、Auth |
+
+### 各类型详解
+
+#### 1. 并发/竞态（~15 条，最高频）
+
+几乎每个模块都有，核心模式是"读-改-写非原子"或"多个异步路径同时操作同一状态"：
+
+| 模块 | 问题 |
+|------|------|
+| Runtime | AddPublisher 异常时 Pipeline 未清理；Remove 先删字典再停实例；规则热更新读-改-写竞态 |
+| Pipeline | 慢发布器阻塞整条流水线（串行 await） |
+| HostService | StopAsync 与 ExecuteAsync 竞态，base.StopAsync 顺序反了 |
+| InfluxDB | Timer 同步调用 FlushBatchAsync 导致并发 flush |
+| MQTT | StopAsync 与重连循环竞态 |
+| Transform | Jint 引擎非线程安全，多线程共享会数据串扰 |
+| Sqlite | `_initialized` 非线程安全；每次操作新建连接无复用 |
+| Plugin | GetLoadedDriverPlugins 返回内部字典引用 |
+| Route | LoadRules 全量替换期间 Resolve 可能读到不一致状态 |
+
+#### 2. 连接/重连（~10 条，驱动层共性问题）
+
+三个驱动 + MQTT 发布器都有类似问题，缺少"连接超时 + 存活检测 + 指数退避重连"三板斧：
+
+| 模块 | 缺失项 |
+|------|--------|
+| Modbus | 无连接超时、无连接存活检测、无指数退避重连 |
+| S7 | OpenAsync 无超时可能永久阻塞、重连时旧 Plc 未释放、无指数退避 |
+| OPC UA | Session 无重连机制、断线后永久失效 |
+| MQTT | 重连循环无上限、UseTls 配置未生效 |
+
+#### 3. 数据丢失（~8 条，工业场景最不可接受）
+
+核心模式：缺少"缓冲 + 重试 + 兜底"，失败就丢：
+
+| 模块 | 问题 |
+|------|------|
+| InfluxDB | 写入失败直接丢弃，无重试/重排队列 |
+| MQTT | 断线期间数据静默丢弃，无缓冲 |
+| Pipeline | DropOldest 策略 + 慢发布器阻塞 = 大面积丢数据 |
+| Runtime | Remove 先删字典，Stop 失败后实例失控但无法管理 |
+| HostService | 停止超时硬编码，总时长可能超限被强制杀死 |
+
+#### 4. 安全漏洞（~8 条，生产环境红线）
+
+核心模式：开发便利性优先，安全防护缺失：
+
+| 模块 | 问题 |
+|------|------|
+| Auth | 硬编码 admin/admin、密码明文比对、默认密钥写在代码中 |
+| Auth | 无登录速率限制、无 Token 撤销机制 |
+| API | /shutdown 任何人可关机、/config/import 无校验可注入 |
+| OPC UA | AutoAcceptUntrustedCertificates=true、SecurityPolicy 配置未生效 |
+| Transform | Jint 脚本引擎未限制危险 API |
+
+#### 5. 资源泄漏（~7 条）
+
+核心模式：覆盖引用前未先释放旧资源：
+
+| 模块 | 问题 |
+|------|------|
+| S7 | 重连时旧 Plc 未 Close，Socket 泄漏 |
+| InfluxDB | SocketsHttpHandler 未 Dispose，TCP 连接池泄漏 |
+| Modbus | TcpClient 重连时未先关闭旧连接 |
+| Plugin | LoadContext.Unload 非立即生效，DLL 文件仍被锁定 |
+
+#### 6. 性能瓶颈（~15 条）
+
+核心模式："每次都重建/重算"，缺少预编译/预排序/缓存：
+
+| 模块 | 问题 |
+|------|------|
+| Pipeline | 串行扇出、发布器无独立超时 |
+| Route | 每次 Resolve 重复 OrderBy、IsTagMatch 每次编译正则、每次创建新 HashSet |
+| Transform | IsTagMatch 同样每次编译正则、分段线性每次 Sort、规则全表扫描 |
+| S7 | DataItems 逐条读取，应按 DB 批量读取 |
+| Sqlite | Import 逐条保存无事务、每次操作新建连接、Export 不必要的反序列化-再序列化 |
+| Metrics | 延迟分位数用 gauge 不符合 Prometheus histogram 规范 |
+
+#### 7. 异常处理（~10 条）
+
+核心模式：异常被吞或未被捕获，导致上层无法感知失败：
+
+| 模块 | 问题 |
+|------|------|
+| Runtime | RestartDriver 静默返回不抛异常 |
+| Pipeline | Transform/Resolve 异常未捕获，消费循环可能崩溃 |
+| S7 | Disconnect() 可能抛异常，StopAsync 被中断 |
+| Sqlite | 所有 DB 操作缺异常处理、ImportFromJson 中 Enum.Parse 无保护 |
+| API | 异常处理不一致 |
+| Auth | 登录失败无日志记录 |
+
+#### 8. 配置问题（~12 条）
+
+核心模式：配置字段"声明了但没接上"或"硬编码应该可配置"：
+
+| 模块 | 问题 |
+|------|------|
+| Modbus | RegisterDefinition.Type 用字符串无编译期检查 |
+| OPC UA | SecurityPolicy 字段存在但未使用、超时硬编码、QueueSize 未配置化 |
+| S7 | CpuType 无校验、默认值与库枚举可能不匹配 |
+| InfluxDB | ReconnectDelayMs 未使用、Gzip 半实现 |
+| MQTT | UseTls 未生效、无 KeepAlive 配置 |
+| Pipeline | Channel 容量硬编码 10000 |
+| Metrics | ChannelCapacity 与实际不同步 |
+
+#### 9. API 设计（~8 条）
+
+| 模块 | 问题 |
+|------|------|
+| ApiEndpoints | 请求模型缺输入校验、Settings 序列化绕一圈、异常处理不一致 |
+| ApiEndpoints | 匿名返回类型无 OpenAPI 契约、直接暴露 ConfigRepo |
+| Auth | 全局默认无认证、所有用户都是 Admin |
+
+#### 10. 代码结构（~10 条）
+
+| 模块 | 问题 |
+|------|------|
+| Runtime | 驱动/发布器增删启停代码高度重复、BuildConfigurationFromJsonPublic 命名尴尬 |
+| ApiEndpoints | 330 行单方法、Request 与 Endpoints 同文件 |
+| Modbus | ModbusFactory 每次 new |
+| OPC UA | ActivitySource/Meter 每实例重复创建 |
+
+#### 11. 可观测性（~7 条）
+
+| 模块 | 问题 |
+|------|------|
+| API | 健康检查永远 healthy |
+| Route | 缺少命中/未命中调试日志 |
+| Metrics | 计数器无 label 维度、缺进程级指标 |
+| Modbus | 缺采集指标统计 |
+| Auth | 登录失败无日志 |
+
+### 修复建议优先级
+
+1. **第一批（安全+数据丢失）**：Auth 安全加固、Pipeline 并行扇出 + 异常保护、InfluxDB/MQTT 数据缓冲 + 重试
+2. **第二批（并发+连接）**：Runtime 竞态修复、驱动连接三板斧（超时+存活+退避）、HostService 停机顺序
+3. **第三批（性能）**：Route/Transform 正则预编译、Sqlite 事务+连接复用、S7 批量读取
+4. **第四批（API+配置）**：输入校验、配置字段对齐、异常处理统一
+5. **第五批（结构+可观测）**：代码拆分、指标维度、健康检查
+
+---
+
+## 十二、从"能跑"到"能上线"——软件质量演进规律
+
+### 为什么这些问题在初期容易被忽略
+
+软件开发有个自然的演进节奏，每个阶段关注点不同：
+
+**第一阶段：让逻辑跑通**
+- 关注"功能对不对"：数据能不能采集、能不能发送、API 能不能响应
+- 心智模型是 "happy path"——假设一切正常
+- 并发、异常、断线、资源泄漏？不会考虑，因为本地测试根本遇不到
+
+**第二阶段：让程序稳住**
+- 逻辑跑通了，但一上线就出问题
+- 典型症状：跑几小时就崩、断网后再也连不上、内存越跑越高
+- 对应最高频的几类问题：**并发竞态、连接重连、资源泄漏、异常处理**
+
+**第三阶段：让程序安全**
+- 安全漏洞在开发环境完全不会暴露（admin/admin 能登录就行）
+- 只有面对真实用户/网络时才是问题
+- 对应：**硬编码凭据、无认证端点、脚本引擎未沙箱**
+
+**第四阶段：让程序快**
+- 初期数据量小，性能问题看不出来
+- 对应：**正则每次编译、逐条读取、串行扇出**
+
+**第五阶段：让程序可观测**
+- "跑得好好的怎么突然不行了？"——缺指标、缺日志
+- 对应：**健康检查假 healthy、缺维度指标**
+
+### 核心规律
+
+> **初期能跑通 = 只覆盖了 happy path；这些待修复问题的本质，全是 sad path 和 edge case。**
+
+工业场景（网关采集）尤其如此——网络断、设备离线、数据爆发、长时间运行——这些在生产环境是常态而非例外。
+
+### 通用启示
+
+| 开发阶段 | 关注点 | 容易忽略 | 对应问题类型 |
+|----------|--------|----------|-------------|
+| 逻辑跑通 | 功能正确性 | 错误路径、边界条件 | 异常处理、配置问题 |
+| 稳定性 | 长时间运行 | 竞态、泄漏、断线 | 并发/竞态、连接/重连、资源泄漏 |
+| 安全性 | 访问控制 | 凭据暴露、注入攻击 | 安全漏洞 |
+| 性能 | 高吞吐 | 重复计算、无效 I/O | 性能瓶颈 |
+| 可观测 | 故障定位 | 指标维度、日志细节 | 可观测性 |
+
+
+
 
 
